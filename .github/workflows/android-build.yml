@@ -22,7 +22,7 @@ jobs:
       - name: Accept Android SDK licenses and install required packages
         run: |
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 2 -type f -name sdkmanager | sort -V | tail -n1)
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort -V | tail -n1)
           if [ -z "$SDKMANAGER" ]; then
             echo "Could not find sdkmanager under $SDK_ROOT/cmdline-tools" >&2
             find "$SDK_ROOT" -maxdepth 3 >&2
