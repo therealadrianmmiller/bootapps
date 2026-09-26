@@ -13,6 +13,8 @@ Its a simple no frills GUI to disabled (or enable) apps that run at boot, WITH i
 - Allows you to export the list and the state of each app
 - Allow you to import and replicate the state of matched apps (if an app was set to disabled in export, its immediately disabled on import)
 
+Note: the SELECT ALL button is not advised, and only for the truly insane
+
 While i loved AutoStarts for years, it never included and import/export function, and i hate having to manually replicate my settings after
 a ROM flash/factory reset
 
