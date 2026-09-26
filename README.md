@@ -1,6 +1,6 @@
 # Half Assed Software presents....BAMINA (Boot Apps Manager Is Not Autostarts)
 
-
+![screenshot](media/screenshot600.jpg)
 
 ## What it is:
 
