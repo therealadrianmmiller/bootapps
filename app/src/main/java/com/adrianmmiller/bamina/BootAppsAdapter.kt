@@ -1,5 +1,6 @@
 package com.adrianmmiller.bamina
 
+import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -32,6 +33,14 @@ class BootAppsAdapter(
         holder.packageName.text = item.packageName
         holder.statusBadge.text = if (item.receiversEnabled) "Boot: on" else "Boot: off"
 
+        if (item.receiversEnabled) {
+            holder.itemView.setBackgroundColor(Color.parseColor("#E8F5E9")) // soft green — boot on
+            holder.statusBadge.setTextColor(Color.parseColor("#2E7D32"))
+        } else {
+            holder.itemView.setBackgroundColor(Color.parseColor("#FFEBEE")) // soft red — boot off
+            holder.statusBadge.setTextColor(Color.parseColor("#C62828"))
+        }
+
         // Avoid firing the listener while recycling views.
         holder.checkbox.setOnCheckedChangeListener(null)
         holder.checkbox.isChecked = item.isSelected
@@ -52,8 +61,9 @@ class BootAppsAdapter(
     override fun getItemCount(): Int = items.size
 
     fun updateData(newItems: List<BootAppInfo>) {
-        items.clear()
-        items.addAll(newItems)
+        val snapshot = ArrayList(newItems) // defensive copy: newItems may be the same
+        items.clear()                      // list object as `items`, so clearing first
+        items.addAll(snapshot)             // would otherwise wipe newItems too
         notifyDataSetChanged()
     }
 

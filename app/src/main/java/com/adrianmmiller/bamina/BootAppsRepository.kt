@@ -7,11 +7,14 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.DataOutputStream
 import java.io.InputStreamReader
+
+private const val TAG = "BootApps"
 
 class BootAppsRepository(private val context: Context) {
 
@@ -26,69 +29,65 @@ class BootAppsRepository(private val context: Context) {
     )
 
     /**
-     * Scans every installed third-party (non-system) package's manifest-declared
-     * receivers and keeps the ones registered for a boot broadcast.
+     * Scans for every third-party app that has a receiver resolving for a boot
+     * broadcast, by asking the system directly (queryBroadcastReceivers per
+     * action, system-wide) rather than manually walking each package's manifest
+     * receiver list — the latter doesn't reliably populate on every API level.
      *
-     * Requires GET_RECEIVERS in the PackageManager query flags. On Android 11+
-     * you also need the QUERY_ALL_PACKAGES permission (or a <queries> block)
-     * to see packages you haven't interacted with.
+     * Requires the QUERY_ALL_PACKAGES permission (or a <queries> block) on
+     * Android 11+ to see receivers belonging to packages you haven't interacted
+     * with; without it, results silently come back empty.
      */
     fun scanBootApps(): List<BootAppInfo> {
+        // packageName -> set of receiver class names that matched a boot action
+        val grouped = LinkedHashMap<String, MutableSet<String>>()
+
+        for (action in bootActions) {
+            val intent = Intent(action)
+            @Suppress("DEPRECATION")
+            val matches = pm.queryBroadcastReceivers(
+                intent,
+                PackageManager.MATCH_DISABLED_COMPONENTS or PackageManager.MATCH_ALL
+            )
+            Log.d(TAG, "action=$action matched ${matches.size} receiver(s)")
+            for (resolveInfo in matches) {
+                val info = resolveInfo.activityInfo ?: continue
+                grouped.getOrPut(info.packageName) { mutableSetOf() }.add(info.name)
+            }
+        }
+        Log.d(TAG, "total distinct packages with a boot receiver: ${grouped.size}")
+
         val results = mutableListOf<BootAppInfo>()
+        for ((packageName, receiverClasses) in grouped) {
+            if (packageName == context.packageName) continue // skip self
 
-        @Suppress("DEPRECATION")
-        val flags = PackageManager.GET_RECEIVERS or PackageManager.MATCH_DISABLED_COMPONENTS
-        val packages = pm.getInstalledPackages(flags)
+            val appInfo = try {
+                pm.getApplicationInfo(packageName, 0)
+            } catch (e: PackageManager.NameNotFoundException) {
+                continue
+            }
 
-        for (pkgInfo in packages) {
-            val appInfo = pkgInfo.applicationInfo ?: continue
-
-            // Skip system apps — keep it to user-installed, third-party apps.
             val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             if (isSystemApp) continue
-
-            val receivers = pkgInfo.receivers ?: continue
-            val matchingReceivers = mutableListOf<String>()
-
-            for (receiver in receivers) {
-                // We already matched by manifest scan; a lighter-weight approach is
-                // to just record every receiver here, since apps rarely declare
-                // receivers with these names for anything else. For stricter
-                // filtering, cross-check against queryBroadcastReceivers() per action.
-                matchingReceivers.add(receiver.name)
-            }
-
-            if (matchingReceivers.isEmpty()) continue
-
-            // Confirm at least one boot action actually resolves to this package
-            // (cuts down on false positives from unrelated receivers).
-            val confirmed = bootActions.any { action ->
-                val intent = Intent(action).setPackage(pkgInfo.packageName)
-                @Suppress("DEPRECATION")
-                pm.queryBroadcastReceivers(intent, PackageManager.MATCH_DISABLED_COMPONENTS)
-                    .isNotEmpty()
-            }
-            if (!confirmed) continue
 
             val label = try {
                 pm.getApplicationLabel(appInfo).toString()
             } catch (e: Exception) {
-                pkgInfo.packageName
+                packageName
             }
 
-            val anyReceiverEnabled = matchingReceivers.any { className ->
-                isComponentEnabled(pkgInfo.packageName, className)
-            }
+            val anyReceiverEnabled = receiverClasses.any { isComponentEnabled(packageName, it) }
 
             results.add(
                 BootAppInfo(
-                    packageName = pkgInfo.packageName,
+                    packageName = packageName,
                     appLabel = label,
-                    receiverClasses = matchingReceivers,
+                    receiverClasses = receiverClasses.toList(),
                     receiversEnabled = anyReceiverEnabled
                 )
             )
         }
+        Log.d(TAG, "third-party (non-system) results after filtering: ${results.size}")
 
         return results.sortedBy { it.appLabel.lowercase() }
     }
@@ -130,13 +129,69 @@ class BootAppsRepository(private val context: Context) {
         context.startActivity(intent)
     }
 
+    // Known locations `su` can live at across different root implementations
+    // (Magisk, KernelSU, older su-based root). PATH resolution isn't reliable
+    // for app processes, so these are tried directly by absolute path.
+    private val knownSuPaths = listOf(
+        "/system/bin/su",
+        "/system/xbin/su",
+        "/sbin/su",
+        "/su/bin/su",
+        "/system/sd/xbin/su",
+        "/data/local/xbin/su",
+        "/data/local/bin/su",
+        "/data/local/su",
+        "/data/adb/su",
+        "/data/adb/ksu/bin/su",
+        "/debug_ramdisk/su",
+        "/apex/com.android.runtime/bin/su"
+    )
+
+    private var cachedSuPath: String? = null
+
+    /**
+     * Finds a working `su` binary by trying each known absolute path directly
+     * (bypassing PATH lookup entirely) and running `id` through it. Caches the
+     * first one that succeeds so later calls don't re-probe every time.
+     */
+    private fun resolveSuPath(): String? {
+        cachedSuPath?.let { return it }
+        for (path in knownSuPaths) {
+            try {
+                val process = Runtime.getRuntime().exec(arrayOf(path, "-c", "id"))
+                val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
+                val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
+                val exitCode = process.waitFor()
+                Log.d(TAG, "probing su at $path -> exitCode=$exitCode stdout='${stdout.trim()}' stderr='${stderr.trim()}'")
+                if (exitCode == 0 && stdout.contains("uid=0")) {
+                    cachedSuPath = path
+                    return path
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "probing su at $path -> ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+        Log.w(TAG, "no working su binary found among known paths")
+        return null
+    }
+
+    private fun runAsRoot(innerCommand: String): Triple<Int, String, String> {
+        val suPath = resolveSuPath() ?: return Triple(127, "", "no su binary found")
+        val process = Runtime.getRuntime().exec(arrayOf(suPath, "-c", innerCommand))
+        val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
+        val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
+        val exitCode = process.waitFor()
+        return Triple(exitCode, stdout, stderr)
+    }
+
     private fun isRootAvailable(): Boolean {
         return try {
-            val process = Runtime.getRuntime().exec("su -c id")
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val output = reader.readText()
-            process.waitFor() == 0 && output.contains("uid=0")
+            val (exitCode, stdout, stderr) = runAsRoot("id")
+            val granted = exitCode == 0 && stdout.contains("uid=0")
+            Log.d(TAG, "root check: exitCode=$exitCode stdout='${stdout.trim()}' stderr='${stderr.trim()}' -> granted=$granted")
+            granted
         } catch (e: Exception) {
+            Log.e(TAG, "root check threw: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }
@@ -154,9 +209,12 @@ class BootAppsRepository(private val context: Context) {
         val target = "$packageName/$className"
         val cmd = if (enable) "pm enable $target" else "pm disable $target"
         return try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
-            process.waitFor() == 0
+            val (exitCode, stdout, stderr) = runAsRoot(cmd)
+            val ok = exitCode == 0
+            Log.d(TAG, "cmd='$cmd' exitCode=$exitCode stdout='${stdout.trim()}' stderr='${stderr.trim()}' -> ok=$ok")
+            ok
         } catch (e: Exception) {
+            Log.e(TAG, "cmd='$cmd' threw: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }
