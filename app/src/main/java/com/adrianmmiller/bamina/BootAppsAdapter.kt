@@ -52,9 +52,8 @@ class BootAppsAdapter(
     override fun getItemCount(): Int = items.size
 
     fun updateData(newItems: List<BootAppInfo>) {
-        val snapshot = ArrayList(newItems) // defensive copy: newItems may be the same
-        items.clear()                      // list object as `items`, so clearing first
-        items.addAll(snapshot)             // would otherwise wipe newItems too
+        items.clear()
+        items.addAll(newItems)
         notifyDataSetChanged()
     }
 
