@@ -1,4 +1,4 @@
-package com.example.bootapps
+package com.adrianmmiller.bamina
 
 import android.content.ComponentName
 import android.content.Context
