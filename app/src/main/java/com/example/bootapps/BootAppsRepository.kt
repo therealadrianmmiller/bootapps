@@ -129,12 +129,24 @@ class BootAppsRepository(private val context: Context) {
         context.startActivity(intent)
     }
 
+    /**
+     * Runs a command as root by routing it through the system shell (`sh -c`)
+     * rather than exec'ing `su` directly — Runtime.exec() does a raw execve()
+     * against the JVM process's own PATH, which often doesn't include wherever
+     * Magisk/KernelSU actually place `su`. The shell resolves PATH the same way
+     * an interactive `adb shell` session would, which is what root managers hook.
+     */
+    private fun runAsRoot(innerCommand: String): Triple<Int, String, String> {
+        val process = Runtime.getRuntime().exec(arrayOf("/system/bin/sh", "-c", "su -c '$innerCommand'"))
+        val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
+        val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
+        val exitCode = process.waitFor()
+        return Triple(exitCode, stdout, stderr)
+    }
+
     private fun isRootAvailable(): Boolean {
         return try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
-            val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
-            val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
-            val exitCode = process.waitFor()
+            val (exitCode, stdout, stderr) = runAsRoot("id")
             val granted = exitCode == 0 && stdout.contains("uid=0")
             Log.d(TAG, "root check: exitCode=$exitCode stdout='${stdout.trim()}' stderr='${stderr.trim()}' -> granted=$granted")
             granted
@@ -157,10 +169,7 @@ class BootAppsRepository(private val context: Context) {
         val target = "$packageName/$className"
         val cmd = if (enable) "pm enable $target" else "pm disable $target"
         return try {
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
-            val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
-            val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
-            val exitCode = process.waitFor()
+            val (exitCode, stdout, stderr) = runAsRoot(cmd)
             val ok = exitCode == 0
             Log.d(TAG, "cmd='$cmd' exitCode=$exitCode stdout='${stdout.trim()}' stderr='${stderr.trim()}' -> ok=$ok")
             ok
