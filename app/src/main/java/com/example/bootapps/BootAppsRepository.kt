@@ -7,11 +7,14 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.DataOutputStream
 import java.io.InputStreamReader
+
+private const val TAG = "BootApps"
 
 class BootAppsRepository(private val context: Context) {
 
@@ -26,69 +29,65 @@ class BootAppsRepository(private val context: Context) {
     )
 
     /**
-     * Scans every installed third-party (non-system) package's manifest-declared
-     * receivers and keeps the ones registered for a boot broadcast.
+     * Scans for every third-party app that has a receiver resolving for a boot
+     * broadcast, by asking the system directly (queryBroadcastReceivers per
+     * action, system-wide) rather than manually walking each package's manifest
+     * receiver list — the latter doesn't reliably populate on every API level.
      *
-     * Requires GET_RECEIVERS in the PackageManager query flags. On Android 11+
-     * you also need the QUERY_ALL_PACKAGES permission (or a <queries> block)
-     * to see packages you haven't interacted with.
+     * Requires the QUERY_ALL_PACKAGES permission (or a <queries> block) on
+     * Android 11+ to see receivers belonging to packages you haven't interacted
+     * with; without it, results silently come back empty.
      */
     fun scanBootApps(): List<BootAppInfo> {
+        // packageName -> set of receiver class names that matched a boot action
+        val grouped = LinkedHashMap<String, MutableSet<String>>()
+
+        for (action in bootActions) {
+            val intent = Intent(action)
+            @Suppress("DEPRECATION")
+            val matches = pm.queryBroadcastReceivers(
+                intent,
+                PackageManager.MATCH_DISABLED_COMPONENTS or PackageManager.MATCH_ALL
+            )
+            Log.d(TAG, "action=$action matched ${matches.size} receiver(s)")
+            for (resolveInfo in matches) {
+                val info = resolveInfo.activityInfo ?: continue
+                grouped.getOrPut(info.packageName) { mutableSetOf() }.add(info.name)
+            }
+        }
+        Log.d(TAG, "total distinct packages with a boot receiver: ${grouped.size}")
+
         val results = mutableListOf<BootAppInfo>()
+        for ((packageName, receiverClasses) in grouped) {
+            if (packageName == context.packageName) continue // skip self
 
-        @Suppress("DEPRECATION")
-        val flags = PackageManager.GET_RECEIVERS or PackageManager.MATCH_DISABLED_COMPONENTS
-        val packages = pm.getInstalledPackages(flags)
+            val appInfo = try {
+                pm.getApplicationInfo(packageName, 0)
+            } catch (e: PackageManager.NameNotFoundException) {
+                continue
+            }
 
-        for (pkgInfo in packages) {
-            val appInfo = pkgInfo.applicationInfo ?: continue
-
-            // Skip system apps — keep it to user-installed, third-party apps.
             val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
             if (isSystemApp) continue
-
-            val receivers = pkgInfo.receivers ?: continue
-            val matchingReceivers = mutableListOf<String>()
-
-            for (receiver in receivers) {
-                // We already matched by manifest scan; a lighter-weight approach is
-                // to just record every receiver here, since apps rarely declare
-                // receivers with these names for anything else. For stricter
-                // filtering, cross-check against queryBroadcastReceivers() per action.
-                matchingReceivers.add(receiver.name)
-            }
-
-            if (matchingReceivers.isEmpty()) continue
-
-            // Confirm at least one boot action actually resolves to this package
-            // (cuts down on false positives from unrelated receivers).
-            val confirmed = bootActions.any { action ->
-                val intent = Intent(action).setPackage(pkgInfo.packageName)
-                @Suppress("DEPRECATION")
-                pm.queryBroadcastReceivers(intent, PackageManager.MATCH_DISABLED_COMPONENTS)
-                    .isNotEmpty()
-            }
-            if (!confirmed) continue
 
             val label = try {
                 pm.getApplicationLabel(appInfo).toString()
             } catch (e: Exception) {
-                pkgInfo.packageName
+                packageName
             }
 
-            val anyReceiverEnabled = matchingReceivers.any { className ->
-                isComponentEnabled(pkgInfo.packageName, className)
-            }
+            val anyReceiverEnabled = receiverClasses.any { isComponentEnabled(packageName, it) }
 
             results.add(
                 BootAppInfo(
-                    packageName = pkgInfo.packageName,
+                    packageName = packageName,
                     appLabel = label,
-                    receiverClasses = matchingReceivers,
+                    receiverClasses = receiverClasses.toList(),
                     receiversEnabled = anyReceiverEnabled
                 )
             )
         }
+        Log.d(TAG, "third-party (non-system) results after filtering: ${results.size}")
 
         return results.sortedBy { it.appLabel.lowercase() }
     }
