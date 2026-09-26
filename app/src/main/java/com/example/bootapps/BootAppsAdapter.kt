@@ -1,4 +1,4 @@
-package com.example.bootapps
+package com.adrianmmiller.bamina
 
 import android.view.LayoutInflater
 import android.view.View
