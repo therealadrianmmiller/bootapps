@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace 'com.example.bootapps'
+    namespace 'com.adrianmmiller.bamina'
     compileSdk 34
 
     signingConfigs {
@@ -17,7 +17,7 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.example.bootapps"
+        applicationId "com.adrianmmiller.bamina"
         minSdk 26
         targetSdk 34
         versionCode 1
