@@ -1,5 +1,7 @@
 # Half Assed Software presents....BAMINA (Boot Apps Manager Is Not Autostarts)
 
+![screenshot](media/screenshot.png)
+
 ## What it is:
 
 Its a simple no frills GUI to disabled (or enable) apps that run at boot, WITH import/export
