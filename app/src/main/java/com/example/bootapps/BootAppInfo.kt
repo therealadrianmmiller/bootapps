@@ -1,4 +1,4 @@
-package com.example.bootapps
+package com.adrianmmiller.bamina
 
 /**
  * Represents one third-party app that has at least one receiver
