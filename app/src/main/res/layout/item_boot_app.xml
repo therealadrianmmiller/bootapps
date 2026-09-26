@@ -37,7 +37,8 @@
         android:id="@+id/text_status_badge"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:textSize="12sp"
+        android:textSize="28sp"
+        android:textStyle="bold"
         android:paddingStart="8dp"
         android:paddingEnd="8dp" />
 </LinearLayout>
