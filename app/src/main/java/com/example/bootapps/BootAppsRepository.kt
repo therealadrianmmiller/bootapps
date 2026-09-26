@@ -131,11 +131,15 @@ class BootAppsRepository(private val context: Context) {
 
     private fun isRootAvailable(): Boolean {
         return try {
-            val process = Runtime.getRuntime().exec("su -c id")
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val output = reader.readText()
-            process.waitFor() == 0 && output.contains("uid=0")
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "id"))
+            val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
+            val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
+            val exitCode = process.waitFor()
+            val granted = exitCode == 0 && stdout.contains("uid=0")
+            Log.d(TAG, "root check: exitCode=$exitCode stdout='${stdout.trim()}' stderr='${stderr.trim()}' -> granted=$granted")
+            granted
         } catch (e: Exception) {
+            Log.e(TAG, "root check threw: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }
@@ -154,8 +158,14 @@ class BootAppsRepository(private val context: Context) {
         val cmd = if (enable) "pm enable $target" else "pm disable $target"
         return try {
             val process = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
-            process.waitFor() == 0
+            val stdout = BufferedReader(InputStreamReader(process.inputStream)).readText()
+            val stderr = BufferedReader(InputStreamReader(process.errorStream)).readText()
+            val exitCode = process.waitFor()
+            val ok = exitCode == 0
+            Log.d(TAG, "cmd='$cmd' exitCode=$exitCode stdout='${stdout.trim()}' stderr='${stderr.trim()}' -> ok=$ok")
+            ok
         } catch (e: Exception) {
+            Log.e(TAG, "cmd='$cmd' threw: ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }
