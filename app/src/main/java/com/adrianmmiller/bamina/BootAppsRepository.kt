@@ -1,4 +1,4 @@
-package package com.adrianmmiller.bamina
+package com.adrianmmiller.bamina
 
 import android.content.ComponentName
 import android.content.Context

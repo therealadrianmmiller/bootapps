@@ -1,4 +1,4 @@
-package package com.adrianmmiller.bamina
+package com.adrianmmiller.bamina
 
 import android.app.Activity
 import android.content.Intent
